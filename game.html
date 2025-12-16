@@ -1,0 +1,959 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>整合式抽獎與計時平台 (AI 加強版)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* --- 全域樣式 --- */
+        body {
+            font-family: 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+        }
+
+        /* 自定義捲軸 */
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: #f1f1f1;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 3px;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
+
+        /* --- 3D 場景樣式 (左側) --- */
+        .scene {
+            perspective: 1000px;
+        }
+
+        .cube-container {
+            width: 100px;
+            height: 100px;
+            position: relative;
+            transform-style: preserve-3d;
+            transform: rotateX(-20deg) rotateY(-25deg);
+            transition: transform 0.3s;
+            cursor: pointer;
+        }
+
+        .cube-face {
+            position: absolute;
+            width: 100px;
+            height: 100px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            transition: background-color 0.2s, box-shadow 0.2s;
+            font-size: 16px;
+            line-height: 1.2;
+            font-weight: bold;
+            text-align: center;
+            padding: 5px;
+            word-break: break-word;
+            overflow: hidden;
+            user-select: none;
+            backface-visibility: hidden;
+            /* 效能優化 */
+        }
+
+        /* 方塊面定位 (translateZ = 50px) */
+        .front {
+            transform: rotateY(0deg) translateZ(50px);
+        }
+
+        .back {
+            transform: rotateY(180deg) translateZ(50px);
+        }
+
+        .right {
+            transform: rotateY(90deg) translateZ(50px);
+        }
+
+        .left {
+            transform: rotateY(-90deg) translateZ(50px);
+        }
+
+        .top {
+            transform: rotateX(90deg) translateZ(50px);
+        }
+
+        .bottom {
+            transform: rotateX(-90deg) translateZ(50px);
+        }
+
+        .cube-face-dark {
+            background-color: #7f1d1d;
+            opacity: 0.95;
+        }
+
+        .cube-active .cube-face {
+            background-color: #ef4444;
+            box-shadow: 0 0 25px rgba(239, 68, 68, 0.6);
+            border-color: #fff;
+            z-index: 10;
+        }
+
+        /* --- 計時器樣式 (右下) --- */
+        .timer-ring-circle {
+            transition: stroke-dashoffset 0.35s;
+            transform: rotate(-90deg);
+            transform-origin: 50% 50%;
+        }
+
+        .blink {
+            animation: blink-animation 1s steps(5, start) infinite;
+        }
+
+        @keyframes blink-animation {
+            to {
+                visibility: hidden;
+            }
+        }
+
+        /* --- 彈窗動畫 --- */
+        .pop-in {
+            animation: popIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+        }
+
+        @keyframes popIn {
+            0% {
+                transform: scale(0.5);
+                opacity: 0;
+            }
+
+            100% {
+                transform: scale(1);
+                opacity: 1;
+            }
+        }
+
+        /* --- AI 載入動畫 --- */
+        .loading-dots:after {
+            content: ' .';
+            animation: dots 1s steps(5, end) infinite;
+        }
+
+        @keyframes dots {
+
+            0%,
+            20% {
+                color: rgba(0, 0, 0, 0);
+                text-shadow: .25em 0 0 rgba(0, 0, 0, 0), .5em 0 0 rgba(0, 0, 0, 0);
+            }
+
+            40% {
+                color: white;
+                text-shadow: .25em 0 0 rgba(0, 0, 0, 0), .5em 0 0 rgba(0, 0, 0, 0);
+            }
+
+            60% {
+                text-shadow: .25em 0 0 white, .5em 0 0 rgba(0, 0, 0, 0);
+            }
+
+            80%,
+            100% {
+                text-shadow: .25em 0 0 white, .5em 0 0 white;
+            }
+        }
+    </style>
+</head>
+
+<body class="bg-gray-100 h-screen w-screen overflow-hidden flex flex-col lg:flex-row">
+
+    <!-- 左側區域 (2/3): 3D 抽獎舞台 -->
+    <section
+        class="w-full lg:w-2/3 h-[60%] lg:h-full bg-gray-900 relative flex flex-col border-r border-gray-800 shadow-2xl z-10">
+        <!-- 標題列 -->
+        <div class="absolute top-0 left-0 w-full p-6 flex justify-between items-start pointer-events-none z-20">
+            <div>
+                <h1 class="text-3xl font-black text-white tracking-wider drop-shadow-md">
+                    <span class="text-red-500">LUCKY</span> DRAW
+                </h1>
+                <p class="text-gray-400 text-sm mt-1">剔除式 3D 抽獎系統 (Gemini AI Powered)</p>
+            </div>
+            <div
+                class="bg-black/30 backdrop-blur px-4 py-2 rounded-full border border-white/10 text-white/80 text-sm pointer-events-auto">
+                <span id="box-count-display">載入中...</span>
+            </div>
+        </div>
+
+        <!-- 3D 內容容器 -->
+        <div class="flex-1 overflow-y-auto custom-scrollbar relative bg-gradient-to-b from-gray-900 to-gray-800">
+            <!-- 網格背景 -->
+            <div class="absolute inset-0 opacity-5 pointer-events-none"
+                style="background-image: linear-gradient(#ffffff 1px, transparent 1px), linear-gradient(90deg, #ffffff 1px, transparent 1px); background-size: 40px 40px;">
+            </div>
+
+            <!-- 舞台 -->
+            <div id="boxes-stage"
+                class="scene flex flex-wrap justify-center content-center gap-16 p-20 min-h-full w-full">
+                <!-- JS 動態生成方塊 -->
+            </div>
+        </div>
+
+        <!-- 底部控制按鈕 -->
+        <div class="p-6 bg-gray-900/90 backdrop-blur border-t border-gray-800 flex justify-center z-20">
+            <button id="start-lottery-btn" onclick="startLottery()"
+                class="bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white text-xl font-bold py-4 px-16 rounded-full shadow-lg shadow-red-900/50 transform transition active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none tracking-widest border border-red-400/20">
+                開始抽獎
+            </button>
+        </div>
+
+        <!-- 中獎全螢幕遮罩 -->
+        <div id="winner-overlay"
+            class="absolute inset-0 bg-black/85 z-50 hidden flex flex-col items-center justify-center p-4 backdrop-blur-md">
+            <div
+                class="pop-in bg-white rounded-3xl p-10 text-center max-w-md w-full shadow-2xl border-8 border-yellow-400 relative">
+                <div class="text-7xl mb-6">🏆</div>
+                <h3 class="text-gray-400 font-bold mb-2 uppercase tracking-wide">Winner</h3>
+                <div id="winner-text" class="text-5xl font-black text-gray-800 mb-8 break-words leading-tight">
+                    <!-- 中獎內容 -->
+                </div>
+                <div class="bg-red-50 rounded-lg p-3 mb-6 border border-red-100">
+                    <p class="text-red-500 text-sm font-medium">注意：此項目將從列表中移除</p>
+                </div>
+                <button onclick="closeWinner()"
+                    class="w-full bg-gray-900 text-white py-4 rounded-xl hover:bg-gray-800 transition font-bold text-lg shadow-lg">
+                    確認並移除
+                </button>
+            </div>
+        </div>
+    </section>
+
+    <!-- 右側區域 (1/3): 工具欄 -->
+    <aside class="w-full lg:w-1/3 h-[40%] lg:h-full flex flex-col bg-white z-20">
+
+        <!-- 右上: 列表設定 (佔剩餘空間) -->
+        <div class="flex-1 flex flex-col min-h-0 border-b border-gray-200 relative">
+            <div class="bg-indigo-600 p-4 text-white flex justify-between items-center shadow-md z-10">
+                <h2 class="font-bold flex items-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="8" y1="6" x2="21" y2="6"></line>
+                        <line x1="8" y1="12" x2="21" y2="12"></line>
+                        <line x1="8" y1="18" x2="21" y2="18"></line>
+                        <line x1="3" y1="6" x2="3.01" y2="6"></line>
+                        <line x1="3" y1="12" x2="3.01" y2="12"></line>
+                        <line x1="3" y1="18" x2="3.01" y2="18"></line>
+                    </svg>
+                    列表設定
+                </h2>
+                <!-- AI 觸發按鈕 -->
+                <button onclick="toggleAIModal('list')"
+                    class="bg-indigo-500 hover:bg-indigo-400 text-white text-xs px-3 py-1.5 rounded-full font-bold flex items-center gap-1 transition-colors shadow-sm border border-indigo-400">
+                    ✨ AI 幫我想
+                </button>
+            </div>
+
+            <!-- 列表內容區 -->
+            <div class="flex-1 overflow-y-auto custom-scrollbar p-4 bg-gray-50 flex flex-col">
+                <div class="flex justify-between items-center mb-2 px-1">
+                    <span id="mode-badge"
+                        class="px-2 py-0.5 text-xs font-bold rounded bg-indigo-500 border border-indigo-400 text-white">唯讀</span>
+                </div>
+
+                <!-- 新增區 -->
+                <div id="add-container" class="hidden mb-3 flex gap-2 shrink-0 transition-all">
+                    <input type="text" id="new-item-input" placeholder="輸入新選項..."
+                        class="flex-1 border border-gray-300 rounded-lg px-3 py-2 focus:border-indigo-500 focus:outline-none shadow-sm text-sm"
+                        onkeypress="if(event.key==='Enter') addItem()">
+                    <button onclick="addItem()"
+                        class="bg-indigo-600 text-white px-3 py-2 rounded-lg hover:bg-indigo-700 shadow-sm">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="12" y1="5" x2="12" y2="19"></line>
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                        </svg>
+                    </button>
+                </div>
+
+                <!-- 列表 -->
+                <div id="list-container" ondblclick="enterEditMode()"
+                    class="flex-1 bg-white border border-gray-200 rounded-xl p-2 cursor-pointer shadow-sm hover:shadow-md transition-shadow">
+                    <!-- JS 生成 -->
+                </div>
+                <p class="text-center text-xs text-gray-400 mt-2 select-none">雙擊列表進行編輯</p>
+            </div>
+
+            <!-- 列表底部按鈕 -->
+            <div class="p-4 bg-white border-t border-gray-100 flex gap-2">
+                <button id="reset-list-btn" onclick="resetList()"
+                    class="hidden bg-gray-200 text-gray-600 px-3 py-2 rounded-lg font-bold text-sm hover:bg-gray-300 transition-colors">
+                    重置
+                </button>
+                <button id="save-btn" onclick="saveList()" disabled
+                    class="flex-1 py-2 px-4 rounded-lg font-bold text-sm transition-all duration-200 bg-gray-100 text-gray-400 cursor-not-allowed">
+                    儲存列表變更
+                </button>
+            </div>
+
+            <!-- AI 列表生成 Modal (絕對定位) -->
+            <div id="ai-list-modal"
+                class="absolute top-0 left-0 w-full h-full bg-white/95 backdrop-blur-sm z-30 hidden flex flex-col p-6 animate-fade-in">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-lg font-bold text-indigo-700 flex items-center gap-2">✨ AI 靈感助手</h3>
+                    <button onclick="toggleAIModal('list')" class="text-gray-400 hover:text-gray-600">✕</button>
+                </div>
+                <p class="text-sm text-gray-600 mb-2">輸入主題（例如：台北午餐、團康遊戲），AI 將自動為您產生選項。</p>
+                <textarea id="ai-list-prompt"
+                    class="w-full h-24 border border-gray-300 rounded-lg p-3 text-sm focus:border-indigo-500 focus:outline-none resize-none mb-4"
+                    placeholder="請輸入主題..."></textarea>
+                <button onclick="generateAIList()" id="ai-list-btn"
+                    class="w-full bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold py-3 rounded-lg shadow-md transition-all flex justify-center items-center gap-2">
+                    <span>開始生成</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- 右下: 計時器 (固定高度或自動適應) -->
+        <div
+            class="bg-slate-800 p-6 flex flex-col items-center justify-center text-white shrink-0 relative overflow-hidden">
+            <!-- 裝飾背景 -->
+            <div
+                class="absolute top-0 right-0 w-32 h-32 bg-blue-500 rounded-full mix-blend-overlay filter blur-3xl opacity-20">
+            </div>
+
+            <div class="w-full flex justify-between items-center mb-4 z-10">
+                <h2 class="text-sm font-bold text-slate-400 tracking-widest flex items-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <polyline points="12 6 12 12 16 14"></polyline>
+                    </svg>
+                    倒數計時器
+                </h2>
+                <!-- AI 計時按鈕 -->
+                <button onclick="toggleAIModal('timer')"
+                    class="text-xs bg-slate-700 hover:bg-slate-600 text-blue-300 px-2 py-1 rounded border border-slate-600 transition-colors flex items-center gap-1">
+                    ✨ 智慧設定
+                </button>
+            </div>
+
+            <div class="flex items-center gap-6 w-full z-10">
+                <!-- 環形進度與時間顯示 -->
+                <div class="relative w-24 h-24 flex-shrink-0">
+                    <svg class="w-full h-full transform -rotate-90">
+                        <circle cx="48" cy="48" r="44" stroke="currentColor" stroke-width="6" fill="transparent"
+                            class="text-slate-700" />
+                        <circle id="timer-ring" cx="48" cy="48" r="44" stroke="currentColor" stroke-width="6"
+                            fill="transparent" stroke-dasharray="276" stroke-dashoffset="0" stroke-linecap="round"
+                            class="text-blue-500 transition-all duration-1000 ease-linear" />
+                    </svg>
+                    <div id="timer-display"
+                        class="absolute top-0 left-0 w-full h-full flex items-center justify-center text-2xl font-mono font-bold">
+                        00:00
+                    </div>
+                </div>
+
+                <!-- 控制區 -->
+                <div class="flex-1 flex flex-col gap-3">
+                    <!-- 輸入 -->
+                    <div id="timer-inputs" class="flex gap-2 justify-center transition-opacity">
+                        <input type="number" id="t-min" placeholder="分" min="0" max="60" value="3"
+                            class="w-16 bg-slate-700 border border-slate-600 rounded text-center py-2 focus:border-blue-500 outline-none placeholder-slate-500">
+                        <input type="number" id="t-sec" placeholder="秒" min="0" max="59" value="0"
+                            class="w-16 bg-slate-700 border border-slate-600 rounded text-center py-2 focus:border-blue-500 outline-none placeholder-slate-500">
+                    </div>
+
+                    <!-- 按鈕 -->
+                    <div class="flex gap-2">
+                        <button id="t-start" onclick="startTimer()"
+                            class="flex-1 bg-blue-600 hover:bg-blue-500 py-2 rounded font-bold text-sm transition text-white">開始</button>
+                        <button id="t-reset" onclick="resetTimer()"
+                            class="bg-slate-600 hover:bg-slate-500 px-3 py-2 rounded font-bold text-sm transition text-white">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
+                                fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                stroke-linejoin="round">
+                                <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 12"></path>
+                                <path d="M3 5v7h7"></path>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <p id="timer-msg" class="text-xs text-slate-400 mt-2 h-4 text-center w-full truncate"></p>
+
+            <!-- AI 計時 Modal (絕對定位) -->
+            <div id="ai-timer-modal"
+                class="absolute top-0 left-0 w-full h-full bg-slate-800/95 backdrop-blur-sm z-30 hidden flex flex-col p-6 animate-fade-in border-t border-slate-600">
+                <div class="flex justify-between items-center mb-2">
+                    <h3 class="text-sm font-bold text-blue-400 flex items-center gap-2">✨ 智慧計時</h3>
+                    <button onclick="toggleAIModal('timer')" class="text-slate-400 hover:text-white">✕</button>
+                </div>
+                <p class="text-xs text-slate-400 mb-2">輸入任務 (如: 煮半熟蛋)，AI 自動設定時間。</p>
+                <div class="flex gap-2 mb-2">
+                    <input type="text" id="ai-timer-prompt"
+                        class="flex-1 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-white focus:border-blue-500 outline-none"
+                        placeholder="輸入任務...">
+                </div>
+                <button onclick="generateAITimer()" id="ai-timer-btn"
+                    class="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 rounded text-sm transition-all flex justify-center items-center gap-2">
+                    <span>設定</span>
+                </button>
+            </div>
+        </div>
+    </aside>
+
+    <script>
+        /* =========================================
+           0. Gemini API 設定
+           ========================================= */
+        const apiKey = ""; // 系統會自動填入 API Key
+
+        async function callGeminiAPI(prompt, systemInstruction) {
+            if (!apiKey) {
+                alert("API Key 尚未設定，無法使用 AI 功能。");
+                return null;
+            }
+
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+
+            const payload = {
+                contents: [{ parts: [{ text: prompt }] }],
+                systemInstruction: { parts: [{ text: systemInstruction }] },
+                generationConfig: {
+                    responseMimeType: "application/json"
+                }
+            };
+
+            // 實作指數退避 (Exponential Backoff)
+            const maxRetries = 3;
+            let attempt = 0;
+            let delay = 1000;
+
+            while (attempt < maxRetries) {
+                try {
+                    const response = await fetch(url, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+
+                    const data = await response.json();
+                    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+
+                    if (text) {
+                        return JSON.parse(text);
+                    } else {
+                        throw new Error("No text in response");
+                    }
+
+                } catch (e) {
+                    console.error(`Attempt ${attempt + 1} failed:`, e);
+                    attempt++;
+                    if (attempt === maxRetries) {
+                        alert("AI 連線失敗，請稍後再試。");
+                        return null;
+                    }
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                    delay *= 2;
+                }
+            }
+        }
+
+        /* =========================================
+           1. 全域資料與初始化
+           ========================================= */
+        const defaultItems = ["珍珠奶茶", "雞排", "牛肉麵", "小籠包", "滷肉飯", "臭豆腐"];
+        let items = [...defaultItems];
+
+        // 嘗試讀取 localStorage
+        const saved = localStorage.getItem('lottery_items');
+        if (saved) {
+            try {
+                items = JSON.parse(saved);
+            } catch (e) {
+                console.error("Parse error", e);
+            }
+        }
+        let isEditing = false;
+        let isLotteryRunning = false;
+
+        // 初始化
+        window.addEventListener('DOMContentLoaded', () => {
+            renderList();
+            renderBoxes();
+            updateListUI();
+        });
+
+        /* =========================================
+           2. 列表編輯器邏輯 (右上)
+           ========================================= */
+        const listContainer = document.getElementById('list-container');
+        const addContainer = document.getElementById('add-container');
+        const newItemInput = document.getElementById('new-item-input');
+        const saveBtn = document.getElementById('save-btn');
+        const resetListBtn = document.getElementById('reset-list-btn');
+        const modeBadge = document.getElementById('mode-badge');
+        const startBtn = document.getElementById('start-lottery-btn');
+
+        // AI Modal 相關
+        const listModal = document.getElementById('ai-list-modal');
+        const listPrompt = document.getElementById('ai-list-prompt');
+        const listAiBtn = document.getElementById('ai-list-btn');
+
+        function toggleAIModal(type) {
+            if (type === 'list') {
+                listModal.classList.toggle('hidden');
+                if (!listModal.classList.contains('hidden')) listPrompt.focus();
+            } else if (type === 'timer') {
+                const timerModal = document.getElementById('ai-timer-modal');
+                timerModal.classList.toggle('hidden');
+                if (!timerModal.classList.contains('hidden')) document.getElementById('ai-timer-prompt').focus();
+            }
+        }
+
+        async function generateAIList() {
+            const prompt = listPrompt.value.trim();
+            if (!prompt) return;
+
+            // UI Loading 狀態
+            const originalBtnText = listAiBtn.innerHTML;
+            listAiBtn.innerHTML = `<span class="loading-dots">生成中</span>`;
+            listAiBtn.disabled = true;
+
+            const systemPrompt = `
+                You are a creative assistant for a lottery app. 
+                The user will give you a theme (e.g., 'Lunch ideas', 'Party games'). 
+                Generate a list of 5 to 10 items related to that theme. 
+                The items should be concise (under 15 characters if possible). 
+                Return ONLY a raw JSON array of strings. 
+                Example output: ["Item1", "Item2", "Item3"]
+            `;
+
+            const result = await callGeminiAPI(prompt, systemPrompt);
+
+            if (result && Array.isArray(result)) {
+                items = result; // 替換現有列表
+                renderList();
+                renderBoxes();
+                toggleAIModal('list');
+                listPrompt.value = ''; // 清空
+            }
+
+            // 恢復 UI
+            listAiBtn.innerHTML = originalBtnText;
+            listAiBtn.disabled = false;
+        }
+
+        function renderList() {
+            listContainer.innerHTML = '';
+            items.forEach((item, index) => {
+                const div = document.createElement('div');
+                div.className = isEditing
+                    ? "flex items-center gap-2 mb-2 animate-fade-in"
+                    : "p-2 border-b border-gray-100 last:border-0 text-gray-700 hover:bg-gray-50 rounded transition-colors";
+
+                if (isEditing) {
+                    div.innerHTML = `
+                        <span class="text-gray-400 w-5 text-xs text-center">${index + 1}</span>
+                        <input type="text" value="${item}" oninput="updateItem(${index}, this.value)" 
+                            class="flex-1 bg-white border border-gray-200 rounded px-2 py-1 text-sm focus:border-indigo-500 focus:outline-none">
+                        <button onclick="deleteItem(${index})" class="text-gray-400 hover:text-red-500 p-1">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                        </button>
+                    `;
+                } else {
+                    div.innerHTML = `<span class="font-bold text-indigo-500 mr-2 text-sm">${index + 1}.</span> <span class="text-sm font-medium">${item}</span>`;
+                }
+                listContainer.appendChild(div);
+            });
+
+            if (items.length === 0) {
+                listContainer.innerHTML = `
+                    <div class="h-full flex flex-col items-center justify-center text-gray-400 py-10">
+                        <p class="text-sm">列表是空的</p>
+                    </div>`;
+            }
+        }
+
+        function enterEditMode() {
+            if (isEditing || isLotteryRunning) return;
+            isEditing = true;
+            updateListUI();
+            renderList();
+        }
+
+        function saveList() {
+            items = items.filter(i => i.trim() !== "");
+            localStorage.setItem('lottery_items', JSON.stringify(items));
+            isEditing = false;
+            updateListUI();
+            renderList();
+            renderBoxes();
+        }
+
+        function resetList() {
+            const saved = localStorage.getItem('lottery_items');
+            if (saved) {
+                try {
+                    items = JSON.parse(saved);
+                } catch (e) { items = [...defaultItems]; }
+            } else {
+                items = [...defaultItems];
+            }
+            renderList();
+            isEditing = false;
+            updateListUI();
+            renderBoxes();
+        }
+
+        function addItem() {
+            const val = newItemInput.value.trim();
+            if (val) {
+                items.push(val);
+                newItemInput.value = '';
+                renderList();
+                newItemInput.focus();
+            }
+        }
+        function deleteItem(idx) { items.splice(idx, 1); renderList(); }
+        function updateItem(idx, val) { items[idx] = val; }
+
+        function updateListUI() {
+            if (isEditing) {
+                addContainer.classList.remove('hidden');
+                saveBtn.disabled = false;
+                saveBtn.classList.remove('bg-gray-100', 'text-gray-400', 'cursor-not-allowed');
+                saveBtn.classList.add('bg-indigo-600', 'text-white', 'hover:bg-indigo-700', 'shadow-md');
+                saveBtn.innerText = "儲存並更新";
+                resetListBtn.classList.remove('hidden');
+                modeBadge.textContent = "編輯中";
+                modeBadge.className = "px-2 py-0.5 text-xs font-bold rounded bg-amber-500 text-white border border-amber-400";
+                startBtn.disabled = true;
+            } else {
+                addContainer.classList.add('hidden');
+                saveBtn.disabled = true;
+                saveBtn.classList.add('bg-gray-100', 'text-gray-400', 'cursor-not-allowed');
+                saveBtn.classList.remove('bg-indigo-600', 'text-white', 'hover:bg-indigo-700', 'shadow-md');
+                saveBtn.innerText = "儲存列表變更";
+                resetListBtn.classList.add('hidden');
+                modeBadge.textContent = "唯讀";
+                modeBadge.className = "px-2 py-0.5 text-xs font-bold rounded bg-indigo-500 text-white border border-indigo-400";
+                checkStartButton();
+            }
+        }
+
+        function checkStartButton() {
+            if (items.length < 2) {
+                startBtn.disabled = true;
+                startBtn.classList.add('opacity-50', 'cursor-not-allowed');
+                if (items.length === 0) startBtn.innerText = "列表為空";
+                else startBtn.innerText = "項目不足";
+            } else {
+                startBtn.disabled = false;
+                startBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+                startBtn.innerText = "開始抽獎";
+            }
+        }
+
+        /* =========================================
+           3. 3D 抽獎邏輯 (左側)
+           ========================================= */
+        const boxesStage = document.getElementById('boxes-stage');
+        const countDisplay = document.getElementById('box-count-display');
+        const winnerOverlay = document.getElementById('winner-overlay');
+        const winnerText = document.getElementById('winner-text');
+        let boxElements = [];
+        let lastWinnerIndex = -1;
+
+        function renderBoxes() {
+            boxesStage.innerHTML = '';
+            boxElements = [];
+            countDisplay.textContent = `剩餘 ${items.length} 個項目`;
+
+            items.forEach((item, index) => {
+                const container = document.createElement('div');
+                container.className = 'relative group';
+
+                const cube = document.createElement('div');
+                cube.className = 'cube-container';
+                cube.id = `cube-${index}`;
+
+                // 3D 方塊面
+                const faces = ['front', 'back', 'right', 'left', 'top', 'bottom'];
+                faces.forEach(faceName => {
+                    const face = document.createElement('div');
+                    face.className = `cube-face ${faceName} cube-face-dark`;
+                    if (faceName === 'front') face.textContent = item;
+                    cube.appendChild(face);
+                });
+
+                container.appendChild(cube);
+                boxesStage.appendChild(container);
+                boxElements.push(cube);
+            });
+            checkStartButton();
+        }
+
+        function startLottery() {
+            if (items.length < 2) return;
+            isLotteryRunning = true;
+            startBtn.disabled = true;
+            startBtn.textContent = "抽獎中...";
+            listContainer.classList.add('opacity-50', 'pointer-events-none');
+
+            let currentIndex = 0;
+            let currentDelay = 50;
+            let maxDelay = 1000;
+
+            function cycle() {
+                boxElements.forEach(el => el.classList.remove('cube-active'));
+
+                const activeCube = boxElements[currentIndex];
+                if (activeCube) {
+                    activeCube.classList.add('cube-active');
+                    // 簡單的縮放動畫
+                    activeCube.style.transform = 'rotateX(-20deg) rotateY(-25deg) scale(1.15) translateZ(20px)';
+                    setTimeout(() => {
+                        if (activeCube) activeCube.style.transform = 'rotateX(-20deg) rotateY(-25deg) scale(1) translateZ(0)';
+                    }, currentDelay * 0.8);
+                }
+
+                if (currentDelay > maxDelay) {
+                    setTimeout(() => showWinner(currentIndex), 600);
+                    return;
+                }
+
+                currentIndex = (currentIndex + 1) % items.length;
+
+                if (currentDelay < 100) currentDelay += 5;
+                else if (currentDelay < 300) currentDelay *= 1.1;
+                else currentDelay *= 1.15;
+
+                setTimeout(cycle, currentDelay);
+            }
+            cycle();
+        }
+
+        function showWinner(index) {
+            lastWinnerIndex = index;
+            winnerText.textContent = items[index];
+            winnerOverlay.classList.remove('hidden');
+
+            // 播放音效 (瀏覽器內建)
+            playBeep(600, 0.1, 'sine');
+            setTimeout(() => playBeep(800, 0.2, 'sine'), 150);
+        }
+
+        function closeWinner() {
+            if (lastWinnerIndex > -1) {
+                // 移除邏輯
+                items.splice(lastWinnerIndex, 1);
+                renderList();
+                renderBoxes();
+                lastWinnerIndex = -1;
+            }
+            winnerOverlay.classList.add('hidden');
+            isLotteryRunning = false;
+            listContainer.classList.remove('opacity-50', 'pointer-events-none');
+            checkStartButton();
+        }
+
+        /* =========================================
+           4. 計時器邏輯 (右下) - 含 AI
+           ========================================= */
+        let tInterval;
+        let tTotal = 0;
+        let tRemain = 0;
+        let tIsRunning = false;
+
+        const tDisplay = document.getElementById('timer-display');
+        const tRing = document.getElementById('timer-ring');
+        const tMinIn = document.getElementById('t-min');
+        const tSecIn = document.getElementById('t-sec');
+        const tStartBtn = document.getElementById('t-start');
+        const tMsg = document.getElementById('timer-msg');
+
+        // AI Timer 相關
+        const timerPrompt = document.getElementById('ai-timer-prompt');
+        const timerAiBtn = document.getElementById('ai-timer-btn');
+
+        async function generateAITimer() {
+            const prompt = timerPrompt.value.trim();
+            if (!prompt) return;
+
+            // UI Loading
+            const originalBtnText = timerAiBtn.innerHTML;
+            timerAiBtn.innerHTML = `<span class="loading-dots">分析中</span>`;
+            timerAiBtn.disabled = true;
+
+            const systemPrompt = `
+                You are a helpful timer assistant. 
+                The user will input a task (e.g., "Boil egg", "Pomodoro").
+                Determine the appropriate duration in minutes and seconds.
+                Return a JSON object with "minutes" (int), "seconds" (int), and "reason" (string, short explanation in Traditional Chinese).
+                Example: {"minutes": 5, "seconds": 0, "reason": "半熟蛋通常需要5分鐘"}
+            `;
+
+            const result = await callGeminiAPI(prompt, systemPrompt);
+
+            if (result) {
+                tMinIn.value = result.minutes;
+                tSecIn.value = result.seconds;
+                tMsg.textContent = result.reason || "";
+
+                // 自動重置並準備開始
+                resetTimer();
+                tMinIn.value = result.minutes; // Reset 會清空，所以要重填
+                tSecIn.value = result.seconds;
+                tDisplay.textContent = `${pad(result.minutes)}:${pad(result.seconds)}`;
+
+                toggleAIModal('timer');
+                timerPrompt.value = '';
+            }
+
+            // 恢復 UI
+            timerAiBtn.innerHTML = originalBtnText;
+            timerAiBtn.disabled = false;
+        }
+
+        // SVG 環設定
+        const radius = tRing.r.baseVal.value;
+        const circumference = radius * 2 * Math.PI;
+        tRing.style.strokeDasharray = `${circumference} ${circumference}`;
+
+        function setRing(percent) {
+            const offset = circumference - (percent / 100) * circumference;
+            tRing.style.strokeDashoffset = offset;
+        }
+
+        function startTimer() {
+            if (tIsRunning) {
+                pauseTimer();
+                return;
+            }
+
+            const m = parseInt(tMinIn.value) || 0;
+            const s = parseInt(tSecIn.value) || 0;
+
+            if (tRemain > 0 && tRemain < tTotal) {
+                // Resume
+            } else {
+                // New Start
+                tTotal = m * 60 + s;
+                tRemain = tTotal;
+            }
+
+            if (tTotal <= 0) {
+                tMsg.textContent = "請設定時間";
+                setTimeout(() => tMsg.textContent = "", 2000);
+                return;
+            }
+
+            tIsRunning = true;
+            tStartBtn.textContent = "暫停";
+            tStartBtn.classList.replace('bg-blue-600', 'bg-amber-500');
+            tStartBtn.classList.replace('hover:bg-blue-500', 'hover:bg-amber-400');
+            tDisplay.classList.remove('text-red-500', 'blink');
+            tRing.classList.replace('text-red-500', 'text-blue-500');
+            if (tMsg.textContent === "請設定時間" || tMsg.textContent === "時間到！") tMsg.textContent = "計時中...";
+
+            document.getElementById('timer-inputs').classList.add('opacity-50', 'pointer-events-none');
+
+            runTick();
+            tInterval = setInterval(runTick, 1000);
+        }
+
+        function runTick() {
+            if (tRemain < 0) {
+                timerFinished();
+                return;
+            }
+
+            const min = Math.floor(tRemain / 60);
+            const sec = tRemain % 60;
+            tDisplay.textContent = `${pad(min)}:${pad(sec)}`;
+
+            const pct = (tRemain / tTotal) * 100;
+            setRing(100 - pct);
+
+            if (tRemain === 0) timerFinished();
+            else tRemain--;
+        }
+
+        function pauseTimer() {
+            clearInterval(tInterval);
+            tIsRunning = false;
+            tStartBtn.textContent = "繼續";
+            tStartBtn.classList.replace('bg-amber-500', 'bg-blue-600');
+            tStartBtn.classList.replace('hover:bg-amber-400', 'hover:bg-blue-500');
+            tMsg.textContent = "已暫停";
+        }
+
+        function resetTimer() {
+            clearInterval(tInterval);
+            tIsRunning = false;
+            tRemain = 0;
+            tTotal = 0;
+            tDisplay.textContent = "03:00";
+            tMinIn.value = "3";
+            tSecIn.value = "0";
+            setRing(0);
+            tRing.style.strokeDashoffset = 0;
+
+            tStartBtn.textContent = "開始";
+            tStartBtn.classList.replace('bg-amber-500', 'bg-blue-600');
+            if (tStartBtn.classList.contains('bg-amber-500')) tStartBtn.classList.remove('bg-amber-500');
+            tStartBtn.classList.add('bg-blue-600');
+
+            document.getElementById('timer-inputs').classList.remove('opacity-50', 'pointer-events-none');
+            tDisplay.classList.remove('text-red-500', 'blink');
+            tRing.classList.replace('text-red-500', 'text-blue-500');
+            tMsg.textContent = "";
+        }
+
+        function timerFinished() {
+            clearInterval(tInterval);
+            tIsRunning = false;
+            tDisplay.textContent = "00:00";
+            tMsg.textContent = "時間到！";
+            tDisplay.classList.add('text-red-500', 'blink');
+            tRing.classList.replace('text-blue-500', 'text-red-500');
+
+            playBeep(880, 0.5, 'square');
+            setTimeout(() => playBeep(880, 0.5, 'square'), 600);
+            setTimeout(() => playBeep(880, 0.5, 'square'), 1200);
+
+            tStartBtn.textContent = "開始";
+            tStartBtn.classList.replace('bg-amber-500', 'bg-blue-600');
+            document.getElementById('timer-inputs').classList.remove('opacity-50', 'pointer-events-none');
+        }
+
+        function pad(n) { return n.toString().padStart(2, '0'); }
+
+        // 簡單音效產生器 (共用)
+        let audioCtx;
+        function playBeep(freq, duration, type) {
+            if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.type = type || 'sine';
+            osc.frequency.value = freq;
+            gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+            osc.start();
+            osc.stop(audioCtx.currentTime + duration);
+        }
+
+    </script>
+</body>
+
+</html>
