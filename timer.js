@@ -6,6 +6,7 @@ let tTotal = 0;
 let tRemain = 0;
 let tIsRunning = false;
 let alarmInterval = null; // For continuous alarm
+let timerEndTime = 0; // For delta time calculation
 
 const tDisplay = document.getElementById('timer-display');
 const tRing = document.getElementById('timer-ring');
@@ -130,25 +131,38 @@ function startTimer() {
 
     document.getElementById('timer-inputs').classList.add('opacity-50', 'pointer-events-none');
 
+    // Delta Time Logic
+    timerEndTime = Date.now() + (tRemain * 1000);
+
     runTick();
     tInterval = setInterval(runTick, 1000);
 }
 
 function runTick() {
-    if (tRemain < 0) {
+    const now = Date.now();
+    const remainingMs = timerEndTime - now;
+
+    // Convert to seconds (ceil/round to behave like a normal timer)
+    // We use ceil so 0.1s connects to 1s, and only <=0 becomes 0
+    tRemain = Math.ceil(remainingMs / 1000);
+
+    if (tRemain <= 0) {
+        tRemain = 0;
+        updateTimerDisplay();
         timerFinished();
         return;
     }
 
+    updateTimerDisplay();
+}
+
+function updateTimerDisplay() {
     const min = Math.floor(tRemain / 60);
     const sec = tRemain % 60;
     tDisplay.textContent = `${pad(min)}:${pad(sec)}`;
 
     const pct = (tRemain / tTotal) * 100;
     setRing(100 - pct);
-
-    if (tRemain === 0) timerFinished();
-    else tRemain--;
 }
 
 function pauseTimer() {
