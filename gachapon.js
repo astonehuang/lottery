@@ -185,31 +185,70 @@ function updatePhysics() {
 }
 
 function startGachaponLoop() {
-    // Boost buttons for chaos
+    const DURATION = 5000;
+    const startTime = Date.now();
+
+    // Sound Ramp (Drumroll)
+    let beepCount = 0;
+    const scheduleBeep = () => {
+        const elapsed = Date.now() - startTime;
+        if (elapsed >= DURATION) return;
+
+        // Exponential speed up: start at 500ms, end at 50ms
+        const progress = elapsed / DURATION;
+        const nextDelay = 500 * Math.pow(0.1, progress);
+
+        playBeep(600 + progress * 400, 0.1, 'sine'); // Pitch up 600->1000
+
+        setTimeout(scheduleBeep, nextDelay);
+    };
+    scheduleBeep();
+
+    // Initial Chaos
     physicsBalls.forEach(b => {
         b.vx += (Math.random() - 0.5) * 30;
-        b.vy -= Math.random() * 30 + 10; // Jump up
+        b.vy -= Math.random() * 30 + 10;
     });
 
-    // Continually churn for 2 seconds
+    // Ramping Churn
     const churnInterval = setInterval(() => {
+        const elapsed = Date.now() - startTime;
+        const progress = elapsed / DURATION; // 0 to 1
+
+        // Intensity multiplier: 1x to 4x
+        const intensity = 1 + progress * 3;
+
         physicsBalls.forEach(b => {
-            b.vx += (Math.random() - 0.5) * 5;
-            b.vy += (Math.random() - 0.5) * 5;
-            if (Math.random() > 0.8) b.vy -= 8; // Random jump
+            b.vx += (Math.random() - 0.5) * 5 * intensity;
+            b.vy += (Math.random() - 0.5) * 5 * intensity;
+            if (Math.random() > (0.8 - progress * 0.3)) {
+                b.vy -= (8 * intensity); // Jump higher and more often
+            }
         });
     }, 100);
 
     // Spin handle
     const handle = document.getElementById('machine-handle');
-    handle.style.transition = 'transform 2s ease-out'; // Restore transition
-    handle.style.transform = 'translate(-50%, -50%) rotate(720deg)'; // Spin more
+    if (handle) {
+        handle.style.transition = `transform ${DURATION}ms ease-out`;
+        handle.style.transform = 'translate(-50%, -50%) rotate(1800deg)'; // 5 spins
+    }
 
     setTimeout(() => {
         clearInterval(churnInterval);
+
+        // Flash Effect
+        const flash = document.createElement('div');
+        flash.className = 'fixed inset-0 bg-white z-[100] pointer-events-none transition-opacity duration-500';
+        document.body.appendChild(flash);
+        requestAnimationFrame(() => flash.classList.add('opacity-0'));
+        setTimeout(() => flash.remove(), 500);
+
         // Pick winner logic remains similar
-        // We pick from visible items (same as balls)
         const visibleFilter = items.filter(item => !item.hidden);
+
+        // Safety check if no items
+        if (visibleFilter.length === 0) return;
 
         let winnerIndex = Math.floor(Math.random() * visibleFilter.length);
         const winnerItem = visibleFilter[winnerIndex];
@@ -219,18 +258,15 @@ function startGachaponLoop() {
         if (exit) {
             const droppedBall = document.createElement('div');
             droppedBall.className = 'ball dropped-ball flex items-center justify-center font-bold text-white shadow-lg rounded-full border-4 border-white/50';
-            // Find color matching winner (hacky but consistent with render)
-            // Or just use random color from palette
+
             const colors = ['#f87171', '#60a5fa', '#facc15', '#4ade80', '#a78bfa', '#fb923c'];
-            // We need to find the specific index in visible list to match color ideally, 
-            // but random looks fine or just consistent color mapping
             const colorIndex = visibleFilter.indexOf(winnerItem);
             droppedBall.style.backgroundColor = colors[colorIndex % colors.length];
 
             droppedBall.style.width = '60px';
             droppedBall.style.height = '60px';
             droppedBall.style.position = 'absolute';
-            droppedBall.style.left = '10px'; // Center in hole (hole is 96px wide, ball 60. (96-60)/2 = 18)
+            droppedBall.style.left = '10px';
             droppedBall.style.top = '10px';
             droppedBall.style.zIndex = '50';
             droppedBall.style.fontSize = '1.25rem';
@@ -242,19 +278,15 @@ function startGachaponLoop() {
             exit.appendChild(droppedBall);
         }
 
-        playBeep(800, 0.1, 'sine');
+        playBeep(1000, 0.3, 'square'); // Winner sound
 
         setTimeout(() => {
-            // Find original index for full object
             const trueWinner = items.find(i => i === winnerItem);
-            // We need an object with originalIndex for closeWinner to work
-            // Let's reuse internal mapping or just find index
             const winnerObj = { ...trueWinner, originalIndex: items.indexOf(trueWinner) };
-
             showWinnerForGachapon(winnerObj);
         }, 800);
 
-    }, 2000); // 2 seconds wait
+    }, DURATION);
 }
 
 function showWinnerForGachapon(winnerObj) {

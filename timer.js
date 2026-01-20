@@ -5,6 +5,7 @@ let tInterval;
 let tTotal = 0;
 let tRemain = 0;
 let tIsRunning = false;
+let alarmInterval = null; // For continuous alarm
 
 const tDisplay = document.getElementById('timer-display');
 const tRing = document.getElementById('timer-ring');
@@ -12,6 +13,32 @@ const tMinIn = document.getElementById('t-min');
 const tSecIn = document.getElementById('t-sec');
 const tStartBtn = document.getElementById('t-start');
 const tMsg = document.getElementById('timer-msg');
+
+// Persistence Logic
+const STORAGE_KEY = 'timer_settings';
+function saveTimerSettings() {
+    const min = tMinIn.value;
+    const sec = tSecIn.value;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ min, sec }));
+}
+function loadTimerSettings() {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+        const { min, sec } = JSON.parse(saved);
+        return { min, sec };
+    }
+    return { min: "3", sec: "0" }; // Default
+}
+
+// Bind listeners
+tMinIn.addEventListener('input', saveTimerSettings);
+tSecIn.addEventListener('input', saveTimerSettings);
+
+// Init on Load
+const initSettings = loadTimerSettings();
+tMinIn.value = initSettings.min;
+tSecIn.value = initSettings.sec;
+tDisplay.textContent = `${pad(initSettings.min)}:${pad(initSettings.sec)}`;
 
 // AI Timer 相關
 const timerPrompt = document.getElementById('ai-timer-prompt');
@@ -42,8 +69,12 @@ async function generateAITimer() {
         tMsg.textContent = result.reason || "";
 
         // 自動重置並準備開始
+        // 自動重置並準備開始
+        // Save new settings
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ min: result.minutes, sec: result.seconds }));
+
         resetTimer();
-        tMinIn.value = result.minutes; // Reset 會清空，所以要重填
+        tMinIn.value = result.minutes;
         tSecIn.value = result.seconds;
         tDisplay.textContent = `${pad(result.minutes)}:${pad(result.seconds)}`;
 
@@ -132,11 +163,15 @@ function pauseTimer() {
 function resetTimer() {
     clearInterval(tInterval);
     tIsRunning = false;
+    tIsRunning = false;
     tRemain = 0;
     tTotal = 0;
-    tDisplay.textContent = "03:00";
-    tMinIn.value = "3";
-    tSecIn.value = "0";
+
+    const saved = loadTimerSettings();
+    tMinIn.value = saved.min;
+    tSecIn.value = saved.sec;
+    tDisplay.textContent = `${pad(saved.min)}:${pad(saved.sec)}`;
+
     setRing(0);
     tRing.style.strokeDashoffset = 0;
 
@@ -149,7 +184,23 @@ function resetTimer() {
     tDisplay.classList.remove('text-red-500', 'blink');
     tRing.classList.replace('text-red-500', 'text-blue-500');
     tMsg.textContent = "";
+    tMsg.textContent = "";
+
+    // Ensure alarm is off on reset
+    stopTimerAlert();
 }
+
+function stopTimerAlert() {
+    if (alarmInterval) {
+        clearInterval(alarmInterval);
+        alarmInterval = null;
+    }
+    const modal = document.getElementById('timer-alert-modal');
+    if (modal) modal.classList.add('hidden');
+}
+
+// Expose to window for button click
+window.stopTimerAlert = stopTimerAlert;
 
 function timerFinished() {
     clearInterval(tInterval);
@@ -159,9 +210,23 @@ function timerFinished() {
     tDisplay.classList.add('text-red-500', 'blink');
     tRing.classList.replace('text-blue-500', 'text-red-500');
 
-    playBeep(880, 0.5, 'square');
-    setTimeout(() => playBeep(880, 0.5, 'square'), 600);
-    setTimeout(() => playBeep(880, 0.5, 'square'), 1200);
+    tRing.classList.replace('text-blue-500', 'text-red-500');
+
+    // Continuous Alarm
+    const playAlarm = () => {
+        playBeep(880, 0.1, 'square');
+        setTimeout(() => playBeep(880, 0.1, 'square'), 150);
+        setTimeout(() => playBeep(880, 0.1, 'square'), 300);
+    };
+
+    playAlarm(); // Play immediately
+
+    if (alarmInterval) clearInterval(alarmInterval);
+    alarmInterval = setInterval(playAlarm, 1000); // Loop every 1s
+
+    // Show Modal
+    const modal = document.getElementById('timer-alert-modal');
+    if (modal) modal.classList.remove('hidden');
 
     tStartBtn.textContent = "開始";
     tStartBtn.classList.replace('bg-amber-500', 'bg-blue-600');
